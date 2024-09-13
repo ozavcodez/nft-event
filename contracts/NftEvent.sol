@@ -1,18 +1,10 @@
-// SPDX-License-Identifier: SEE LICENSE IN LICENSE
+// SPDX-License-Identifier: MIT
 pragma solidity ^0.8.24;
 
 import "@openzeppelin/contracts/token/ERC721/IERC721.sol";
 
 contract EventOrganizer {
-    address nftCollectionAddress;
     uint256 public totalEventsCreated;
-
-    constructor() {}
-
-    struct AttendanceRecord {
-        address attendee;
-        uint256 checkInTimestamp;
-    }
 
     struct OrganizedEvent {
         uint256 eventId;
@@ -26,15 +18,16 @@ contract EventOrganizer {
         uint256 maxParticipants;
         bool isRegistrationClosed;
         bool isEventCancelled;
-        address nftRequired;
+        address nftRequired;  // Address of the NFT collection required to register
         address[] participants;
-        AttendanceRecord[] attendanceRecords;
+        mapping(address => bool) attendanceRecord;
     }
 
     mapping(uint256 => OrganizedEvent) public eventRegistry;
-    mapping(address => mapping(uint256 => bool)) public userRegistrations;
+    mapping(address => mapping(uint256 => bool)) public userRegistrations; // Tracks whether a user has registered for an event
 
-    // Function to create a new event
+
+    // Create a new event
     function organizeEvent(
         address _nftRequired,
         string memory _eventName,
@@ -43,81 +36,60 @@ contract EventOrganizer {
         uint256 _startTime,
         uint256 _endTime,
         uint256 _maxParticipants
-    ) external returns (OrganizedEvent memory) {
-        require(msg.sender != address(0), "InvalidAddress");
-        require(_nftRequired != address(0), "InvalidNFTAddress");
-        require(!_isEmpty(_eventName), "EventNameRequired");
-        require(!_isEmpty(_location), "LocationRequired");
-        require(!_isEmpty(_details), "DetailsRequired");
-        require(_startTime < _endTime, "InvalidStartTime");
-        require(_maxParticipants > 0, "MaxParticipantsRequired");
+    ) external returns (uint256) {
+        require(_nftRequired != address(0), "NFT collection address required");
+        require(bytes(_eventName).length > 0, "Event name required");
+        require(_startTime < _endTime, "Invalid event timings");
 
-        uint eventId = totalEventsCreated + 1;
-        OrganizedEvent storage newEvent = eventRegistry[eventId];
-        newEvent.eventId = eventId;
+        totalEventsCreated++;
+        OrganizedEvent storage newEvent = eventRegistry[totalEventsCreated];
+        newEvent.eventId = totalEventsCreated;
         newEvent.eventName = _eventName;
         newEvent.location = _location;
         newEvent.details = _details;
-        newEvent.organizer = msg.sender;
+        newEvent.organizer = msg.sender;  // Set the caller as the organizer
         newEvent.startTime = _startTime;
         newEvent.endTime = _endTime;
         newEvent.creationTimestamp = block.timestamp;
-        newEvent.nftRequired = _nftRequired;
+        newEvent.nftRequired = _nftRequired;  // Set the NFT collection required for registration
         newEvent.maxParticipants = _maxParticipants;
 
-        totalEventsCreated = eventId; // Update the event counter
-        return newEvent;
+        return totalEventsCreated;
     }
 
-    // Get all participants for an event
-    function getEventParticipants(uint eventId) external view returns (address[] memory) {
-        require(isEventOrganizer(eventId), "NotOrganizer");
-        require(eventRegistry[eventId].eventId >= 1, "InvalidEventId");
-
-        return eventRegistry[eventId].participants;
-    }
-
-    // Register a user for the event
+    // Register for an event
     function registerForEvent(uint256 eventId) external {
-        require(eventRegistry[eventId].eventId >= 1, "InvalidEventId");
-        require(!userRegistrations[msg.sender][eventId], "AlreadyRegistered");
-        require(!eventRegistry[eventId].isRegistrationClosed, "RegistrationClosed");
-        require(!eventRegistry[eventId].isEventCancelled, "EventCancelled");
+        OrganizedEvent storage orgEvent = eventRegistry[eventId];
+        require(orgEvent.eventId > 0, "Invalid event");
+        require(!userRegistrations[msg.sender][eventId], "Already registered");
+        require(orgEvent.participants.length < orgEvent.maxParticipants, "Max participants reached");
+        require(!orgEvent.isRegistrationClosed, "Registration closed");
+        require(!orgEvent.isEventCancelled, "Event cancelled");
 
-        address nftRequired = eventRegistry[eventId].nftRequired;
-        require(hasRequiredNFT(nftRequired, msg.sender) >= 1, "NFTRequiredForEvent");
+        // Ensure the participant holds the required NFT
+        require(IERC721(orgEvent.nftRequired).balanceOf(msg.sender) > 0, "Must hold required NFT to register");
 
-        eventRegistry[eventId].participants.push(msg.sender);
+        // Add participant to the event
+        orgEvent.participants.push(msg.sender);
         userRegistrations[msg.sender][eventId] = true;
     }
 
-    // Check-in for an event
-    function checkInForEvent(uint eventId, address participant) external returns (AttendanceRecord memory) {
-        require(isEventOrganizer(eventId), "NotOrganizer");
-        require(eventRegistry[eventId].eventId >= 1, "InvalidEventId");
-        require(userRegistrations[participant][eventId], "NotRegisteredForEvent");
+    // Check-in to the event (only event organizer can check in participants)
+    function checkInParticipant(uint256 eventId, address participant) external {
+        OrganizedEvent storage orgEvent = eventRegistry[eventId];
+        require(msg.sender == orgEvent.organizer, "Only organizer can check in");
+        require(userRegistrations[participant][eventId], "User not registered");
 
-        AttendanceRecord memory newRecord = AttendanceRecord({
-            attendee: participant,
-            checkInTimestamp: block.timestamp
-        });
-
-        eventRegistry[eventId].attendanceRecords.push(newRecord);
-        return newRecord;
+        orgEvent.attendanceRecord[participant] = true;
     }
 
-    // Internal function to check for empty strings
-    function _isEmpty(string memory str) internal pure returns (bool) {
-        return bytes(str).length == 0;
+    // Get all participants for an event
+    function getEventParticipants(uint256 eventId) external view returns (address[] memory) {
+        return eventRegistry[eventId].participants;
     }
 
-    // Check if the user owns the required NFT for event participation
-    function hasRequiredNFT(address _nftCollection, address user) public view returns (uint) {
-        return IERC721(_nftCollection).balanceOf(user);
-    }
-
-    // Check if the message sender is the event organizer
-    function isEventOrganizer(uint256 eventId) internal view returns (bool) {
-        return eventRegistry[eventId].organizer == msg.sender;
+    // Check if a participant attended the event
+    function isUserAttended(uint256 eventId, address participant) external view returns (bool) {
+        return eventRegistry[eventId].attendanceRecord[participant];
     }
 }
