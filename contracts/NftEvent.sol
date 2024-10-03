@@ -23,7 +23,7 @@ contract EventOrganizer {
         mapping(address => bool) attendanceRecord;
     }
 
-    mapping(uint256 => OrganizedEvent) public eventRegistry;
+    mapping(uint256 => OrganizedEvent) public eventRegistry;  
     mapping(address => mapping(uint256 => bool)) public userRegistrations; // Tracks whether a user has registered for an event
 
 
